@@ -3744,9 +3744,10 @@ async function gradeWithAI(container, prompt) {
 
   // Try models in order of preference — gemini-1.5-flash is most universally available on free tier
   const MODELS = [
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash-8b",
     "gemini-1.5-flash",
-    "gemini-1.5-flash-latest",
-    "gemini-pro",
+    "gemini-2.0-flash",
   ];
 
   const BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
