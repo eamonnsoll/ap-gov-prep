@@ -3744,10 +3744,7 @@ async function gradeWithAI(container, prompt) {
 
   // Try models in order of preference — gemini-1.5-flash is most universally available on free tier
   const MODELS = [
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash-8b",
     "gemini-1.5-flash",
-    "gemini-2.0-flash",
   ];
 
   const BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
@@ -3789,7 +3786,7 @@ async function gradeWithAI(container, prompt) {
 
   // Try each model; auto-retry once on 429 after a 65-second countdown
   var attempts = 0;
-  var maxAttempts = 2; // initial try + one auto-retry after cooldown
+  var maxAttempts = 1; // single attempt — no auto-retry that doubles quota usage
 
   outer: while (attempts < maxAttempts) {
     attempts++;
@@ -3893,12 +3890,13 @@ async function gradeWithAI(container, prompt) {
       "4. Clear the old key in the setup box above and paste the new one";
   } else if (lastStatus === 429) {
     errorHTML +=
-      "<strong>Rate limit still reached after auto-retry.</strong><br><br>" +
-      "The app already waited 65 seconds and tried again automatically, but the rate limit persists. This means you have likely hit the <strong>daily limit</strong> (1,500 free requests/day).<br><br>" +
-      "Options:<br>" +
-      "• Wait until tomorrow — the daily quota resets at midnight Pacific time<br>" +
-      "• Visit <strong>aistudio.google.com</strong> → API keys → check usage<br>" +
-      "• Each student should use their own personal API key so quotas are not shared";
+      "<strong>Gemini rate limit hit.</strong><br><br>" +
+      "This usually means you sent requests too quickly in the last 60 seconds. " +
+      "The free tier allows 15 requests per minute.<br><br>" +
+      "<strong>Wait 60 seconds and click Grade with AI again.</strong><br><br>" +
+      "If this keeps happening, your API key may still be in a 'new account' throttled state. " +
+      "Try generating a fresh key at <strong>aistudio.google.com</strong> — " +
+      "sometimes a new key resolves this within a few minutes.";
   } else if (lastStatus === 403) {
     errorHTML +=
       "<strong>API access denied (403).</strong><br><br>" +
