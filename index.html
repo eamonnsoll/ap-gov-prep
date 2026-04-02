@@ -3758,82 +3758,115 @@ async function gradeWithAI(container, prompt) {
 
   let lastStatus = 0;
   let lastMsg = "";
-  let lastRaw = "";
 
-  for (var mi = 0; mi < MODELS.length; mi++) {
-    var model = MODELS[mi];
-    var url = BASE + model + ":generateContent?key=" + apiKey;
+  // Helper: wait ms milliseconds, updating the spinner message with a countdown
+  function waitWithCountdown(ms) {
+    return new Promise(function(resolve) {
+      var seconds = Math.ceil(ms / 1000);
+      var tick = setInterval(function() {
+        seconds--;
+        if (feedbackContainer) {
+          feedbackContainer.innerHTML =
+            "<div class='ai-feedback-box'>" +
+            "<div class='ai-loading'><div class='ai-spinner'></div>" +
+            "<span>Rate limit hit — retrying in " + seconds + "s…</span></div>" +
+            "</div>";
+        }
+        if (seconds <= 0) {
+          clearInterval(tick);
+          if (feedbackContainer) {
+            feedbackContainer.innerHTML =
+              "<div class='ai-feedback-box'>" +
+              "<div class='ai-loading'><div class='ai-spinner'></div>" +
+              "<span>Retrying…</span></div>" +
+              "</div>";
+          }
+          resolve();
+        }
+      }, 1000);
+    });
+  }
 
-    try {
-      var res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: requestBody
-      });
+  // Try each model; auto-retry once on 429 after a 65-second countdown
+  var attempts = 0;
+  var maxAttempts = 2; // initial try + one auto-retry after cooldown
 
-      lastStatus = res.status;
+  outer: while (attempts < maxAttempts) {
+    attempts++;
+    for (var mi = 0; mi < MODELS.length; mi++) {
+      var model = MODELS[mi];
+      var url = BASE + model + ":generateContent?key=" + apiKey;
 
-      if (res.ok) {
-        var data = await res.json();
-        var text = (
-          data.candidates &&
-          data.candidates[0] &&
-          data.candidates[0].content &&
-          data.candidates[0].content.parts &&
-          data.candidates[0].content.parts[0] &&
-          data.candidates[0].content.parts[0].text
-        ) ? data.candidates[0].content.parts[0].text : "";
+      try {
+        var res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: requestBody
+        });
 
-        if (!text && data.candidates && data.candidates[0] && data.candidates[0].finishReason === "SAFETY") {
-          text = "The response was blocked by the safety filter. Please rephrase your response and try again.";
+        lastStatus = res.status;
+
+        if (res.ok) {
+          var data = await res.json();
+          var text = (
+            data.candidates &&
+            data.candidates[0] &&
+            data.candidates[0].content &&
+            data.candidates[0].content.parts &&
+            data.candidates[0].content.parts[0] &&
+            data.candidates[0].content.parts[0].text
+          ) ? data.candidates[0].content.parts[0].text : "";
+
+          if (!text && data.candidates && data.candidates[0] && data.candidates[0].finishReason === "SAFETY") {
+            text = "The response was blocked by the safety filter. Please rephrase your response and try again.";
+          }
+          if (!text) { text = "Gemini returned an empty response. Please try again."; }
+
+          var htmlText = text
+            .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+            .replace(/\*([^*]+?)\*/g, "<em>$1</em>")
+            .replace(/^#{1,3}\s+(.+)$/gm, "<strong>$1</strong>")
+            .replace(/\n\n/g, "<br><br>")
+            .replace(/\n/g, "<br>");
+
+          var scoreMatch = text.match(/(\d)\s*(out of|\/)\s*(\d)/i);
+          var scoreDisplay = scoreMatch
+            ? "<div class='ai-feedback-score'>Score: " + scoreMatch[0] + "</div>"
+            : "";
+
+          feedbackContainer.innerHTML =
+            "<div class='ai-feedback-box'>" +
+            "<div class='ai-feedback-header'>⚡ AI Feedback (Gemini)</div>" +
+            scoreDisplay +
+            "<div class='ai-feedback-body'>" + htmlText + "</div>" +
+            "</div>";
+          return; // success
         }
 
-        if (!text) {
-          text = "Gemini returned an empty response. Please try again.";
+        var errData = await res.json().catch(function() { return {}; });
+        lastMsg = (errData.error && errData.error.message) ? errData.error.message : ("HTTP " + res.status);
+
+        if (res.status === 404) continue;          // model not found → try next
+        if (res.status === 403) continue;          // access denied → try next model
+        if (res.status === 400 && (lastMsg.includes("API_KEY") || lastMsg.includes("API key"))) break outer; // bad key → stop entirely
+
+        if (res.status === 429) {
+          // Rate limited — if we still have a retry attempt, wait and restart the model loop
+          if (attempts < maxAttempts) {
+            await waitWithCountdown(65000); // 65 seconds clears the per-minute window
+            continue outer; // restart model loop after cooldown
+          } else {
+            break outer; // already retried once — give up
+          }
         }
 
-        // Convert markdown to HTML
-        var htmlText = text
-          .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-          .replace(/\*([^*]+?)\*/g, "<em>$1</em>")
-          .replace(/^#{1,3}\s+(.+)$/gm, "<strong>$1</strong>")
-          .replace(/\n\n/g, "<br><br>")
-          .replace(/\n/g, "<br>");
-
-        var scoreMatch = text.match(/(\d)\s*(out of|\/)\s*(\d)/i);
-        var scoreDisplay = scoreMatch
-          ? "<div class='ai-feedback-score'>Score: " + scoreMatch[0] + "</div>"
-          : "";
-
-        feedbackContainer.innerHTML =
-          "<div class='ai-feedback-box'>" +
-          "<div class='ai-feedback-header'>⚡ AI Feedback (Gemini)</div>" +
-          scoreDisplay +
-          "<div class='ai-feedback-body'>" + htmlText + "</div>" +
-          "</div>";
-        return; // success — stop trying models
+      } catch (networkErr) {
+        lastMsg = networkErr.message;
+        lastStatus = 0;
+        break outer; // network errors won't be fixed by retrying
       }
-
-      // Not OK — read the error and decide whether to try next model
-      var errData = await res.json().catch(function() { return {}; });
-      lastMsg = (errData.error && errData.error.message) ? errData.error.message : ("HTTP " + res.status);
-      lastRaw = JSON.stringify(errData).slice(0, 300);
-
-      // 404 = model not found on this account → try next model
-      if (res.status === 404) continue;
-      // 429 = genuine rate limit → stop and tell user
-      if (res.status === 429) break;
-      // 400 with API key error → wrong key, stop
-      if (res.status === 400 && (lastMsg.includes("API_KEY") || lastMsg.includes("API key"))) break;
-      // 403 → key valid but billing/quota issue → try next model
-      if (res.status === 403) continue;
-      // Any other error → try next model
-    } catch (networkErr) {
-      lastMsg = networkErr.message;
-      lastStatus = 0;
-      // Network errors (CORS, offline) won't be fixed by trying another model
-      break;
     }
+    break; // all models exhausted without a 429 retry trigger
   }
 
   // All models failed — show a helpful, specific error
@@ -3860,11 +3893,12 @@ async function gradeWithAI(container, prompt) {
       "4. Clear the old key in the setup box above and paste the new one";
   } else if (lastStatus === 429) {
     errorHTML +=
-      "<strong>Rate limit reached.</strong><br><br>" +
-      "You have hit the free Gemini quota. Options:<br>" +
-      "• Wait 60 seconds and try again (per-minute limit)<br>" +
-      "• If it keeps happening, you may have hit the daily limit (1,500 free requests/day) — try again tomorrow<br>" +
-      "• Visit <strong>aistudio.google.com</strong> to check your usage";
+      "<strong>Rate limit still reached after auto-retry.</strong><br><br>" +
+      "The app already waited 65 seconds and tried again automatically, but the rate limit persists. This means you have likely hit the <strong>daily limit</strong> (1,500 free requests/day).<br><br>" +
+      "Options:<br>" +
+      "• Wait until tomorrow — the daily quota resets at midnight Pacific time<br>" +
+      "• Visit <strong>aistudio.google.com</strong> → API keys → check usage<br>" +
+      "• Each student should use their own personal API key so quotas are not shared";
   } else if (lastStatus === 403) {
     errorHTML +=
       "<strong>API access denied (403).</strong><br><br>" +
