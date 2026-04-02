@@ -4,7 +4,7 @@ A fully self-contained AP U.S. Government and Politics exam prep web app.
 
 ## Live App
 
-👉 **[Open the App](https://YOUR-USERNAME.github.io/ap-gov-prep/)**
+👉 **[Open the App](https://eamonnsoll.github.io/ap-gov-prep/)**
 
 *(Replace `YOUR-USERNAME` with your actual GitHub username after deploying)*
 
